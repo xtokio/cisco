@@ -9,7 +9,7 @@ Cisco package
 go get github.com/xtokio/cisco
 ```
 
-ENV Variables
+ENV Variables `you will need a Cisco privilege level 15 password`
 ```bash
 export CISCO_USERNAME="your_cisco_username"
 export CISCO_PASSWORD="your_cisco_password"
