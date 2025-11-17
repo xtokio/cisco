@@ -100,6 +100,13 @@ func main() {
 		panic(error)
 	}
 	println(no_shutdown_interfaces_data)
+
+  commands := []string{"configure terminal", "interface Gi1/0/1", "shutdown", "end"}
+	run_cisco_commands_data, error := cisco.RunCommands("my_switch_full_fqdn", commands)
+	if error != nil {
+		panic(error)
+	}
+	println(run_cisco_commands_data)
 }
 ```
 
