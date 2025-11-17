@@ -88,6 +88,18 @@ func main() {
 		println("==========================================")
 
 	}
+
+  shutdown_interfaces_data, error := cisco.Interface_shutdown("my_switch_full_fqdn", "Gi1/0/1")
+	if error != nil {
+		panic(error)
+	}
+	println(shutdown_interfaces_data)
+
+	no_shutdown_interfaces_data, error := cisco.Interface_no_shutdown("my_switch_full_fqdn", "Gi1/0/1")
+	if error != nil {
+		panic(error)
+	}
+	println(no_shutdown_interfaces_data)
 }
 ```
 
