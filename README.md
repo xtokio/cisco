@@ -27,8 +27,67 @@ Add the dependency to your `main.go` file:
 ## Usage
 
 ```go
+package main
+
+import "github.com/xtokio/cisco"
+
 func main() {
-  // Todo
+  show_version_data, error := cisco.Show_version("my_switch_full_fqdn")
+	if error != nil {
+		panic(error)
+	}
+
+	println(show_version_data["Hardware"])
+	println(show_version_data["Version"])
+	println(show_version_data["Release"])
+	println(show_version_data["SoftwareImage"])
+	println(show_version_data["SerialNumber"])
+	println(show_version_data["Uptime"])
+	println(show_version_data["Restarted"])
+	println(show_version_data["ReloadReason"])
+	println(show_version_data["Rommon"])
+
+
+  show_interfaces_data, error := cisco.Show_interfaces("my_switch_full_fqdn")
+	if error != nil {
+		panic(error)
+	}
+
+	for _, interface_data := range show_interfaces_data {
+		println(interface_data.Interface)
+		println(interface_data.Description)
+		println(interface_data.IPAddress)
+		println(interface_data.LinkStatus)
+		println(interface_data.ProtocolStatus)
+		println(interface_data.Hardware)
+		println(interface_data.Reliability)
+		println(interface_data.TxLoad)
+		println(interface_data.RxLoad)
+		println(interface_data.Mtu)
+		println(interface_data.Duplex)
+		println(interface_data.Speed)
+		println(interface_data.MediaType)
+		println(interface_data.Bandwidth)
+		println(interface_data.Delay)
+		println(interface_data.Encapsulation)
+		println(interface_data.LastInput)
+		println(interface_data.LastOutput)
+		println(interface_data.OutputHang)
+		println(interface_data.QueueStrategy)
+		println(interface_data.InputRateBps)
+		println(interface_data.OutputRateBps)
+		println(interface_data.PacketsInput)
+		println(interface_data.PacketsOutput)
+		println(interface_data.Runts)
+		println(interface_data.Giants)
+		println(interface_data.Throttles)
+		println(interface_data.InputErrors)
+		println(interface_data.OutputErrors)
+		println(interface_data.CrcErrors)
+		println(interface_data.Collisions)
+		println("==========================================")
+
+	}
 }
 ```
 
