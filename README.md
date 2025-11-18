@@ -18,10 +18,9 @@ export CISCO_PASSWORD="your_cisco_password"
 Add the dependency to your `main.go` file:
 
   ```go
- import (
-    "fmt"
+ 	import (
     "github.com/xtokio/cisco"
-  )
+	)
   ```
 
 ## Usage
