@@ -455,6 +455,104 @@ func Interface_no_shutdown(switch_hostname string, switch_interface string) (str
 	return outputString, nil
 }
 
+func Interface_change_description(switch_hostname string, switch_interface string, interface_description string) (string, error) {
+	client, err := connectToSwitch(switch_hostname)
+	if err != nil {
+		// Just return the connection error
+		return "", err
+	}
+	// 3. Defer closing the *client*
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		log.Printf("%s :: %s :: Failed to create session :: %v", switch_hostname, "shutdown", err)
+		return "", fmt.Errorf("%s :: %s :: Failed to create session :: %v", switch_hostname, "shutdown", err)
+	}
+	defer session.Close()
+
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          0,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
+	}
+
+	if err := session.RequestPty("vt100", 80, 200, modes); err != nil {
+		log.Printf("request for pseudo-terminal failed for %s: %v", switch_hostname, err)
+		return "", fmt.Errorf("request for pseudo-terminal failed for %s: %v", switch_hostname, err)
+	}
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		log.Printf("Unable to setup stdin for session on %s: %v", switch_hostname, err)
+		return "", fmt.Errorf("unable to setup stdin for session on %s: %v", switch_hostname, err)
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		log.Printf("Unable to setup stdout for session on %s: %v", switch_hostname, err)
+		return "", fmt.Errorf("unable to setup stdout for session on %s: %v", switch_hostname, err)
+	}
+
+	if err := session.Shell(); err != nil {
+		log.Printf("failed to start shell on %s: %v", switch_hostname, err)
+		return "", fmt.Errorf("failed to start shell on %s: %v", switch_hostname, err)
+	}
+
+	commands := []string{
+		"terminal length 0", // Prevents paging '--More--' prompts
+		"configure terminal",
+		fmt.Sprintf("interface %s", switch_interface),
+		fmt.Sprintf("description %s", interface_description),
+		"end",
+		"exit",
+	}
+
+	for _, cmd := range commands {
+		_, err = fmt.Fprintf(stdin, "%s\n", cmd)
+		if err != nil {
+			log.Printf("Failed to write to stdin on %s: %v", switch_hostname, err)
+			return "", fmt.Errorf("failed to write to stdin on %s: %v", switch_hostname, err)
+		}
+	}
+
+	var buf bytes.Buffer
+	// Channel to signal that session.Wait() has finished
+	done := make(chan error, 1)
+
+	// Goroutine to read stdout and wait for the session to close (after 'exit' command)
+	go func() {
+		// Reads from stdout until the session closes (EOF)
+		// This must happen *before* session.Wait() for session.Wait() to be useful.
+		buf.ReadFrom(stdout)
+		done <- session.Wait() // Wait for the remote command/shell to exit
+	}()
+
+	// --- TIMEOUT MECHANISM ---
+	// Give this command a generous 3 seconds to complete since 'show interface' can be long.
+	const commandTimeout = 3 * time.Second
+
+	select {
+	case err := <-done:
+		// Command execution finished successfully or with an error
+		if err != nil && err != io.EOF {
+			// io.EOF is often returned by session.Wait() on clean exit, which is fine
+			log.Printf("Session wait failed on %s: %v", switch_hostname, err)
+			return "", fmt.Errorf("session wait failed on %s: %w", switch_hostname, err)
+		}
+	case <-time.After(commandTimeout):
+		// Timeout hit. Close the client connection to forcefully terminate the session.
+		client.Close()
+		log.Printf("Show Interfaces timed out after %s on %s", commandTimeout, switch_hostname)
+		return "", fmt.Errorf("%s command timed out after %s", "shutdown", commandTimeout)
+	}
+
+	outputString := buf.String()
+
+	log.Printf("Successfully applied '%s' to interface %s on %s.", "shutdown", switch_interface, switch_hostname)
+
+	return outputString, nil
+}
+
 // Close closes the underlying SSH connection
 func (c *Client) Close() {
 	c.Client.Close()

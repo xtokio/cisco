@@ -99,6 +99,12 @@ func main() {
 		panic(error)
 	}
 	println(no_shutdown_interfaces_data)
+	
+	interface_change_description_data, error := cisco.Interface_change_description("my_switch_full_fqdn", "Gi1/0/1", "New Description")
+	if error != nil {
+		panic(error)
+	}
+	println(interface_change_description_data)
 
   commands := []string{"configure terminal", "interface Gi1/0/1", "shutdown", "end"}
 	run_cisco_commands_data, error := cisco.RunCommands("my_switch_full_fqdn", commands)
