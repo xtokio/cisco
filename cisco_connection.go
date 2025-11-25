@@ -548,7 +548,7 @@ func Interface_change_description(switch_hostname string, switch_interface strin
 
 	outputString := buf.String()
 
-	log.Printf("Successfully applied '%s' to interface %s on %s.", "shutdown", switch_interface, switch_hostname)
+	log.Printf("Successfully changed description '%s' to interface %s on %s.", interface_description, switch_interface, switch_hostname)
 
 	return outputString, nil
 }
