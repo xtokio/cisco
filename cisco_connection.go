@@ -18,6 +18,152 @@ type Client struct {
 	SwitchHostname string
 }
 
+// ConnectToSwitchWithCredentials creates and returns a new Client with an active SSH session
+func connectToSwitchWithCredentials(switch_hostname string, username string, password string) (*Client, error) {
+	sshConfig := &ssh.ClientConfig{
+		User: username,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(password),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // Use a proper HostKeyCallback in production!
+		Timeout:         1 * time.Second,
+		// Manually define all supported ciphers
+		Config: ssh.Config{
+			Ciphers: []string{
+				// Modern ciphers (the defaults your other 9 switches use)
+				"aes128-gcm@openssh.com",
+				"aes256-gcm@openssh.com",
+				"chacha20-poly1305@openssh.com",
+				"aes128-ctr",
+				"aes192-ctr",
+				"aes256-ctr",
+
+				// Add a legacy cipher that the old switch supports
+				// (from the "peer offered" list in your error)
+				"aes128-cbc",
+			},
+			// KeyExchanges for HANDSHAKE
+			KeyExchanges: []string{
+				// Modern Kex (defaults from your error's "we offered" list)
+				"curve25519-sha256",
+				"ecdh-sha2-nistp256",
+				"ecdh-sha2-nistp384",
+				"ecdh-sha2-nistp521",
+				"diffie-hellman-group14-sha256",
+				// Legacy Kex (the one your switch needs)
+				"diffie-hellman-group1-sha1",
+				"diffie-hellman-group14-sha1",
+				"diffie-hellman-group1-sha256",
+				"diffie-hellman-group14-sha256",
+				"diffie-hellman-group1-sha512",
+				"diffie-hellman-group14-sha512",
+			},
+		},
+	}
+
+	sshClient, err := ssh.Dial("tcp", switch_hostname+":22", sshConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial SSH to %s: %w", switch_hostname, err)
+	}
+
+	return &Client{
+		Client:         sshClient,
+		SwitchHostname: switch_hostname,
+	}, nil
+}
+
+func RunCommandWithCredentials(switch_hostname string, switch_command string, username string, password string) (string, error) {
+	client, err := connectToSwitchWithCredentials(switch_hostname, username, password)
+	if err != nil {
+		// Just return the connection error
+		return "", err
+	}
+	// 3. Defer closing the *client*
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		log.Printf("%s :: %s :: Failed to create session :: %v", switch_hostname, switch_command, err)
+		return "", fmt.Errorf("%s :: %s :: Failed to create session :: %v", switch_hostname, switch_command, err)
+	}
+	defer session.Close()
+
+	modes := ssh.TerminalModes{
+		ssh.ECHO:          0,
+		ssh.TTY_OP_ISPEED: 14400,
+		ssh.TTY_OP_OSPEED: 14400,
+	}
+
+	if err := session.RequestPty("vt100", 80, 200, modes); err != nil {
+		log.Printf("request for pseudo-terminal failed for %s: %v", switch_hostname, err)
+		return "", fmt.Errorf("request for pseudo-terminal failed for %s: %v", switch_hostname, err)
+	}
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		log.Printf("Unable to setup stdin for session on %s: %v", switch_hostname, err)
+		return "", fmt.Errorf("unable to setup stdin for session on %s: %v", switch_hostname, err)
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		log.Printf("Unable to setup stdout for session on %s: %v", switch_hostname, err)
+		return "", fmt.Errorf("unable to setup stdout for session on %s: %v", switch_hostname, err)
+	}
+
+	if err := session.Shell(); err != nil {
+		log.Printf("failed to start shell on %s: %v", switch_hostname, err)
+		return "", fmt.Errorf("failed to start shell on %s: %v", switch_hostname, err)
+	}
+
+	commands := []string{
+		"terminal length 0",
+		switch_command,
+		"exit",
+	}
+	for _, cmd := range commands {
+		_, err = fmt.Fprintf(stdin, "%s\n", cmd)
+		if err != nil {
+			log.Printf("Failed to write to stdin on %s: %v", switch_hostname, err)
+			return "", fmt.Errorf("failed to write to stdin on %s: %v", switch_hostname, err)
+		}
+	}
+
+	var buf bytes.Buffer
+	// Channel to signal that session.Wait() has finished
+	done := make(chan error, 1)
+
+	// Goroutine to read stdout and wait for the session to close (after 'exit' command)
+	go func() {
+		// Reads from stdout until the session closes (EOF)
+		// This must happen *before* session.Wait() for session.Wait() to be useful.
+		buf.ReadFrom(stdout)
+		done <- session.Wait() // Wait for the remote command/shell to exit
+	}()
+
+	// --- TIMEOUT MECHANISM ---
+	// Give this command a generous 3 seconds to complete since 'show interface' can be long.
+	const commandTimeout = 30 * time.Second
+
+	select {
+	case err := <-done:
+		// Command execution finished successfully or with an error
+		if err != nil && err != io.EOF {
+			// io.EOF is often returned by session.Wait() on clean exit, which is fine
+			log.Printf("Session wait failed on %s: %v", switch_hostname, err)
+			return "", fmt.Errorf("session wait failed on %s: %w", switch_hostname, err)
+		}
+	case <-time.After(commandTimeout):
+		// Timeout hit. Close the client connection to forcefully terminate the session.
+		client.Close()
+		log.Printf("Show Interfaces timed out after %s on %s", commandTimeout, switch_hostname)
+		return "", fmt.Errorf("%s command timed out after %s", switch_command, commandTimeout)
+	}
+
+	outputString := buf.String()
+
+	return outputString, nil
+}
+
 // ConnectToSwitch creates and returns a new Client with an active SSH session
 func connectToSwitch(switch_hostname string) (*Client, error) {
 	// Retrieve credentials from environment variables
