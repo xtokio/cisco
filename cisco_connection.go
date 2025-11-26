@@ -72,7 +72,7 @@ func connectToSwitchWithCredentials(switch_hostname string, username string, pas
 	}, nil
 }
 
-func RunCommandWithCredentials(switch_hostname string, switch_command string, username string, password string) (string, error) {
+func RunCommandWithCredentials(switch_hostname string, username string, password string, switch_command string) (string, error) {
 	client, err := connectToSwitchWithCredentials(switch_hostname, username, password)
 	if err != nil {
 		// Just return the connection error
