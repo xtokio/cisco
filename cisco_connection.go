@@ -715,6 +715,7 @@ func normalizeInterfaceName(name string) string {
 		"GigabitEthernet", "Gi",
 		"FiveGigabitEthernet", "Fi",
 		"FiveGi", "Fi",
+		"Fiv", "Fi",
 		"TenGigabitEthernet", "Te",
 		"TenGi", "Te",
 		"Ten", "Te",
