@@ -51,9 +51,8 @@ func parseCdpNeighbors(rawOutput string) ([]CdpNeighbor, error) {
 	headerLine := ""
 	headerIndex := -1
 
-	// 1. Find the header line ("Device ID" / "Device-ID" and "Port ID")
+	// 1. Find the header line
 	for i, line := range lines {
-		// Use a generic search for "Device" and "Port ID"
 		if strings.Contains(line, "Device") && strings.Contains(line, "Port ID") {
 			headerLine = line
 			headerIndex = i
@@ -71,13 +70,10 @@ func parseCdpNeighbors(rawOutput string) ([]CdpNeighbor, error) {
 
 	// 2. Determine the start index of each column from the header.
 	localIntfIndex := strings.Index(headerLine, "Local Intrfce")
-
-	// Check for both Hldtme (Nexus) and Holdtme (IOS)
 	holdtmeIndex := strings.Index(headerLine, "Hldtme")
 	if holdtmeIndex == -1 {
-		holdtmeIndex = strings.Index(headerLine, "Holdtme") // Fallback for full IOS spelling
+		holdtmeIndex = strings.Index(headerLine, "Holdtme")
 	}
-
 	capabilityIndex := strings.Index(headerLine, "Capability")
 	platformIndex := strings.Index(headerLine, "Platform")
 	portIDIndex := strings.Index(headerLine, "Port ID")
@@ -92,46 +88,89 @@ func parseCdpNeighbors(rawOutput string) ([]CdpNeighbor, error) {
 		line := lines[i]
 		trimmedLine := strings.TrimSpace(line)
 
-		// Explicitly skip the dash line and other non-data lines.
+		// Explicitly skip non-data lines.
 		if trimmedLine == "" || strings.Contains(trimmedLine, "Total cdp entries") || strings.Contains(trimmedLine, "Device-ID") || strings.Contains(trimmedLine, "---") {
 			continue
 		}
 
-		// Check if the current line is long enough for the Platform column.
-		isLongEnoughForDetail := len(line) > platformIndex
+		// LOGIC: Distinguish between 3 types of lines:
+		// A. Detail Line: Starts with whitespace (Device ID column is empty).
+		// B. Single-Line Entry: Starts with text AND is long enough to contain a Platform.
+		// C. Device ID Only: Starts with text BUT is too short to be a full entry.
 
-		var deviceIDFromColumn string
-		if isLongEnoughForDetail {
-			// Check if the Device ID column (up to the Local Intrfce index) is blank.
-			deviceIDFromColumn = strings.TrimSpace(line[0:localIntfIndex])
+		// Check 1: Is it a Detail Line? (Indented)
+		// We check if the line is long enough to have interface data, but the Device ID area is empty.
+		isDetailLine := false
+		if len(line) > localIntfIndex {
+			deviceIDArea := strings.TrimSpace(line[0:localIntfIndex])
+			if deviceIDArea == "" && strings.TrimSpace(line[localIntfIndex:]) != "" {
+				isDetailLine = true
+			}
 		}
 
-		// It's a detail line if the Device ID column is blank AND the line contains data from the interface columns onwards.
-		isDetailLine := deviceIDFromColumn == "" && isLongEnoughForDetail && strings.TrimSpace(line[localIntfIndex:]) != ""
-
 		if isDetailLine {
-			// This is the detail line
-
+			// *** TYPE A: DETAIL LINE (Second line of a split entry) ***
 			if lastDeviceID == "" {
+				log.Printf("Warning: Found detail line without preceding Device ID: %s", line)
 				continue
 			}
 
-			// *** FIX: Apply a -1 offset to the boundary between Capability and Platform ***
+			// Bounds check for safety
+			if len(line) < portIDIndex {
+				// Try to salvage what we can, or skip if critical data is missing
+				if len(line) < platformIndex {
+					log.Printf("Warning: Detail line too short to parse: %s", line)
+					continue
+				}
+			}
+
+			// For the detail line, we extract assuming the standard column headers apply
 			neighbor := CdpNeighbor{
-				Neighbor:  lastDeviceID,
-				Interface: strings.TrimSpace(line[localIntfIndex:holdtmeIndex]),
-				// Shift end of slice left by 1
-				Capability: strings.TrimSpace(line[capabilityIndex : platformIndex-1]),
-				// Shift start of slice left by 1
-				Platform:          strings.TrimSpace(line[platformIndex-1 : portIDIndex-1]),
-				NeighborInterface: strings.TrimSpace(line[portIDIndex-1:]),
+				Neighbor:          lastDeviceID,
+				Interface:         strings.TrimSpace(line[localIntfIndex:holdtmeIndex]),
+				HoldTime:          strings.TrimSpace(line[holdtmeIndex:capabilityIndex]),
+				Capability:        strings.TrimSpace(line[capabilityIndex : platformIndex]),
+				Platform:          strings.TrimSpace(line[platformIndex : portIDIndex]),
+				NeighborInterface: strings.TrimSpace(line[portIDIndex:]),
 			}
 			neighbors = append(neighbors, neighbor)
 			lastDeviceID = ""
 
-		} else if trimmedLine != "" {
-			// This is a standalone Device ID line.
-			lastDeviceID = trimmedLine
+		} else {
+			// It starts with text. It is either Type B (Single Line) or Type C (Device ID Only).
+
+			// *** CRITICAL FIX: Use platformIndex as the threshold ***
+			// If a line is shorter than the start of the Platform column, it CANNOT be a full entry.
+			// This correctly identifies "debb015-a.hub.nd.edu" as a "Device ID Only" line,
+			// even if it spills into the Local Intrfce column area.
+
+			if len(line) >= platformIndex {
+				// *** TYPE B: SINGLE-LINE ENTRY ***
+
+				// Extract the Device ID safely
+				deviceID := ""
+				if len(line) > localIntfIndex {
+					deviceID = strings.TrimSpace(line[0:localIntfIndex])
+				} else {
+					deviceID = trimmedLine
+				}
+
+				neighbor := CdpNeighbor{
+					Neighbor:          deviceID,
+					Interface:         strings.TrimSpace(line[localIntfIndex:holdtmeIndex]),
+					HoldTime:          strings.TrimSpace(line[holdtmeIndex:capabilityIndex]),
+					Capability:        strings.TrimSpace(line[capabilityIndex : platformIndex]),
+					Platform:          strings.TrimSpace(line[platformIndex : portIDIndex]),
+					NeighborInterface: strings.TrimSpace(line[portIDIndex:]),
+				}
+				neighbors = append(neighbors, neighbor)
+				lastDeviceID = ""
+
+			} else {
+				// *** TYPE C: DEVICE ID ONLY LINE ***
+				// The line is too short to be a full record. It is just a Device ID.
+				lastDeviceID = trimmedLine
+			}
 		}
 	}
 
